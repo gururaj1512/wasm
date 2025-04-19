@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Memory Management</title>
+</head>
+<body>
+    <p>Hello, WebAssembly!</p>
+
+    <script>
+        var memory = new WebAssembly.Memory({
+            initial: 256,
+            maximum: 512
+        });
+
+        var exports;
+        var moduleLoaded = false;
+
+        WebAssembly.instantiateStreaming(fetch("malloc.wasm"), {
+            js: {
+                mem: memory
+            },
+            env: {
+                emscripten_resize_heap: function(delta) {
+                    memory.grow(delta);
+                },
+                _abort_js: function() {
+                    throw new Error('abort called');
+                },
+                abort: function() {
+                    throw new Error('abort called');
+                },
+                memory: memory
+            },
+            wasi_snapshot_preview1: {
+                proc_exit: function(code) { 
+                    return code;
+                },
+                fd_write: function() { 
+                    return 0; 
+                },
+                fd_close: function() { 
+                    return 0; 
+                },
+                fd_seek: function() { 
+                    return 0; 
+                }
+            }
+        }).then((results) => {
+            exports = results.instance.exports;
+            memory = results.instance.exports.memory;
+            moduleLoaded = true;
+        }).catch(error => {
+            console.error('WebAssembly initialization error:', error);
+        });
+        
+        function run_wasm() {
+            // var ptr = exports.wasmmalloc(4 * 10);
+            // var arr = new Uint32Array(memory.buffer, ptr);
+            // for (var i = 0; i < 10; i++) {
+            //     arr[i] = i * 2;
+            // }
+
+            var arr = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20];
+            var ptr = encodeArray(arr, 10, 4);
+
+            var sum = exports.accumulate(ptr, 10);
+            exports.wasmfree(ptr);
+
+            document.querySelector("#ret").innerHTML += `${sum}<br>`;
+        }
+
+        function get_string() {
+            var str = decodeString(exports.getString());
+            console.log(str);
+            navigator.clipboard.writeText(str);
+        }
+
+        function encodeArray(arr, len, sizeOf = 1) {
+            var ptr;
+            var out;
+
+            if (sizeOf == 8) {
+                ptr = exports.wasmmalloc(len * 8);
+                out = new BigUint64Array(memory.buffer, ptr);
+            } else if (sizeOf == 4) {
+                ptr = exports.wasmmalloc(len * 4);
+                out = new Uint32Array(memory.buffer, ptr);
+            } else {
+                ptr = exports.wasmmalloc(len);
+                out = new Uint8Array(memory.buffer, ptr);
+            }
+
+            for (var i = 0; i < len; i++) {
+                out[i] = arr[i];
+            }
+
+            return ptr;
+        }
+
+        function decodeArray(ptr, len) {
+            return new Uint8Array(memory.buffer).slice(ptr, ptr + len);
+        }
+
+        function decodeString(ptr, len) {
+            return new TextDecoder("utf8").decode(decodeArray(ptr, len));
+        }
+
+        function decodeString(ptr) {
+            var bytes = new Uint8Array(memory.buffer, ptr);
+            var strlen = 0;
+            while (bytes[strlen] != 0) strlen++;
+
+            return new TextDecoder("utf8").decode(bytes.slice(0, strlen));
+        }
+    </script>
+
+    <input type="number" id="a">
+    <button onclick="run_wasm()">Trigger</button>
+    <button onclick="get_string()">Copy String</button>
+    <p id="ret"></p>
+</body>
+</html>
